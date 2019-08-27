@@ -11,9 +11,11 @@ class QuestionsDatabase < SQLite3::Database
   end 
 end 
 
+#{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+#{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
 
 class User
-  attr_accessor :fname, :lname 
+  attr_accessor :fname, :lname, :id 
 
   def self.all 
     data = QuestionsDatabase.instance.execute("SELECT * FROM users")
@@ -53,6 +55,18 @@ class User
     @lname = datum['lname'] 
   end 
 
+  def authored_questions
+    Questions.find_by_author_id(self.id)
+  end 
+
+  def authored_replies
+    Replies.find_by_user_id(self.id)
+  end 
+
+  def followed_questions 
+    QuestionFollows.followed_questions_for_user_id(self.id)
+  end 
+
   def create
     raise '#{self} already in datacase' if @id 
     QuestionsDatabase.instance.execute(<<-SQL, @fname, @lname)
@@ -77,6 +91,9 @@ class User
   end 
 end
 
+#{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+#{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+
 class Questions
   attr_accessor :title, :body, :associated_author 
 
@@ -84,7 +101,8 @@ class Questions
     data = QuestionsDatabase.instance.execute("SELECT * FROM questions")
     data.map { |datum| Questions.new(datum) }
   end 
-    def self.find_by_id(id)
+
+  def self.find_by_id(id)
     data = QuestionsDatabase.instance.execute(<<-SQL, id)
     SELECT 
       * 
@@ -97,11 +115,36 @@ class Questions
     Questions.new(data.first)
   end 
 
+  def self.find_by_author_id(associated_author)
+    data = QuestionsDatabase.instance.execute(<<-SQL, associated_author)
+    SELECT 
+      * 
+    FROM
+      questions
+    WHERE
+      associated_author = ?
+    SQL
+    return nil if data.length == 0 
+    data.map {|datum| Questions.new(datum)}  
+  end 
+
   def initialize(datum)
     @id = datum['id']
     @title = datum['title']
     @body = datum['body'] 
     @associated_author = datum['associated_author']
+  end 
+
+  def author
+    Users.find_by_id(self.associated_author)
+  end 
+
+  def replies
+    Replies.find_by_question_id(self.id)
+  end 
+
+  def followers 
+    QuestionFollows.followers_for_question_id(self.id)
   end 
 
   def create
@@ -128,8 +171,12 @@ class Questions
   end 
 end 
 
+#{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+#{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+
 class QuestionFollows 
     attr_accessor :user_id, :questions_id
+    attr_reader :id 
 
   def self.all 
     data = QuestionsDatabase.instance.execute("SELECT * FROM question_follows")
@@ -149,6 +196,51 @@ class QuestionFollows
     QuestionFollows.new(data.first)
   end 
 
+  def self.followers_for_question_id(questions_id)
+    u_ids = QuestionsDatabase.instance.execute(<<-SQL, questions_id)
+      SELECT 
+        user_id
+      FROM 
+        question_follows
+      WHERE 
+        questions_id = ?
+      SQL
+    ans = [] #Array of user object 
+    u_ids.each {|u_id| ans << User.find_by_id(u_id['user_id']) } 
+    ans 
+  end 
+
+  def self.followed_questions_for_user_id(user_id)
+    u_ids = QuestionsDatabase.instance.execute(<<-SQL, user_id)
+      SELECT 
+        questions_id
+      FROM 
+        question_follows
+      WHERE 
+        user_id = ?
+      SQL
+    ans = [] #Array of user object 
+    u_ids.each {|u_id| ans << Questions.find_by_id(u_id['questions_id']) } 
+    ans 
+  end 
+
+  def self.most_followed_questions(n)
+    m_follow = QuestionsDatabase.instance.execute(<<-SQL, n)
+      SELECT
+        questions.* 
+      FROM
+        question_follows
+      JOIN questions ON questions.id = question_follows.questions_id  
+      GROUP BY 
+        questions.id 
+      ORDER BY
+        COUNT(*) DESC
+      LIMIT 
+        ?
+    SQL
+    m_follow.map {|qids| Questions.new(qids)}
+  end 
+
   def initialize(datum)
     @id = datum['id']
     @user_id = datum['user_id']
@@ -159,7 +251,7 @@ class QuestionFollows
     raise '#{self} already in datacase' if @id 
     QuestionsDatabase.instance.execute(<<-SQL, @user_id, @questions_id)
       INSERT INTO 
-        users(user_id, questions_id)
+        question_follows(user_id, questions_id)
       VALUES
         (?, ?)
     SQL
@@ -168,26 +260,29 @@ class QuestionFollows
 
   def update 
     raise '#{self} not in databasse' unless @id 
-    QuestionsDatabase.instance.execute(<<-SQL, @id, @user_id, @questions_id)
+    QuestionsDatabase.instance.execute(<<-SQL, @user_id, @questions_id, @id)
       UPDATE
-        users
-      SELECT
-        @user_id = ?, @questions_id = ?
+        question_follows
+      SET
+        user_id = ?, questions_id = ?
       WHERE
-        @id = ?
+        id = ?
     SQL
   end 
 end 
 
+#{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+#{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+
 class Replies 
-    attr_accessor :question_id, :parent, :user_id, :body 
+    attr_accessor :question_id, :parent, :user_id, :body, :id
 
   def self.all 
     data = QuestionsDatabase.instance.execute("SELECT * FROM replies")
     data.map { |datum| Replies.new(datum) }
   end 
 
-    def self.find_by_id(id)
+  def self.find_by_id(id)
     data = QuestionsDatabase.instance.execute(<<-SQL, id)
     SELECT 
       * 
@@ -200,12 +295,62 @@ class Replies
     Replies.new(data.first)
   end 
 
+  def self.find_by_user_id(user_id)
+    data = QuestionsDatabase.instance.execute(<<-SQL, user_id)
+    SELECT 
+      * 
+    FROM
+      replies
+    WHERE
+      user_id = ?
+    SQL
+    return nil if data.length == 0 
+    Replies.new(data.first)
+  end
+
+  def self.find_by_question_id(question_id)
+    data = QuestionsDatabase.instance.execute(<<-SQL, question_id)
+    SELECT 
+      * 
+    FROM
+      replies
+    WHERE
+      question_id = ?
+    SQL
+    return nil if data.length == 0 
+    data.map {|datum| Replies.new(datum)}
+  end
+
   def initialize(datum)
     @id = datum['id']
     @question_id = datum['question_id']
     @parent = datum['parent'] 
     @user_id = datum['user_id']
     @body = datum['body']
+  end 
+
+  def author
+    User.find_by_id(self.user_id)
+  end 
+
+  def question 
+    Questions.find_by_id(self.question_id)
+  end 
+
+  def parent_reply
+    Replies.find_by_id(self.parent)
+  end 
+
+  def child_replies 
+    child_ids = QuestionsDatabase.instance.execute(<<-SQL, self.id)
+      SELECT
+        id 
+      FROM
+        replies
+      WHERE
+        parent = ?
+    SQL
+    child_ids.map {|ids| Replies.find_by_id(ids['id'])}
   end 
 
   def create
@@ -231,6 +376,9 @@ class Replies
     SQL
   end 
 end 
+
+#{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+#{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
 
 class QuestionLikes 
     attr_accessor :user_id, :question_id
