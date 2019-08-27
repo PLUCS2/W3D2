@@ -128,6 +128,10 @@ class Questions
     data.map {|datum| Questions.new(datum)}  
   end 
 
+  def self.most_followed_questions(n) 
+    QuestionFollows.most_followed_questions(n)
+  end 
+
   def initialize(datum)
     @id = datum['id']
     @title = datum['title']
@@ -399,6 +403,21 @@ class QuestionLikes
     SQL
     return nil if data.length == 0 
     QuestionLikes.new(data.first)
+  end 
+
+  def self.likers_for_question_id(question_id)
+    us = QuestionsDatabase.instance.execute(<<-SQL, question_id)
+      SELECT 
+        users.*
+      FROM 
+        users 
+      JOIN question_likes ON users.id = question_likes.user_id
+      WHERE 
+        question_id = ? 
+      GROUP BY 
+        users.id
+    SQL
+    us.map {|us| User.new(us)}
   end 
 
   def initialize(datum)
